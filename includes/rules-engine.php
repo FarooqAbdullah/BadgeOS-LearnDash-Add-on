@@ -115,6 +115,8 @@ function badgeos_learndash_user_deserves_learndash_step( $return, $user_id, $ach
 		return $return;
 	}
 
+	$screen = get_current_screen();
+
 	// Grab our step requirements
 	$requirements = badgeos_get_step_requirements( $achievement_id );
 
@@ -221,6 +223,10 @@ function badgeos_learndash_user_deserves_learndash_step( $return, $user_id, $ach
 			}
 		}
 
+		if( $screen->post_type == "sfwd-essays" ) {
+			$learndash_triggered = true;
+		}
+
 		// LearnDash requirements met
 		if ( $learndash_triggered ) {
 			// Grab the trigger count
@@ -238,3 +244,71 @@ function badgeos_learndash_user_deserves_learndash_step( $return, $user_id, $ach
 }
 
 add_filter( 'user_deserves_achievement', 'badgeos_learndash_user_deserves_learndash_step', 15, 6 );
+
+/**
+ * Award achievement to user on quiz when updated essay
+ *
+ * @since 1.0.2
+ *
+ * @param int		$quiz_id
+ * @param int		$question_id
+ * @param array		$updated_scoring
+ * @param WP_Post	$essay
+ */
+function _badgeos_learnadsh_essay_update_quiz_trigger( $quiz_id, $question_id, $updated_scoring, $essay ) {
+
+	global $blog_id, $wpdb;
+
+	$award_achivement = false;
+
+	$return = true;
+
+	$user_data = get_user_by( 'id', $essay->post_author );
+
+	$this_trigger = "badgeos_learndash_quiz_completed_specific";
+
+	$query =   "SELECT pm.*, p.post_type, pmprd.meta_value as quiz_id, pmprd2.meta_value as min_garde FROM {$wpdb->prefix}posts p
+				INNER JOIN {$wpdb->prefix}postmeta pm ON (p.ID = pm.post_id AND pm.meta_key = '_badgeos_learndash_trigger') 
+				INNER JOIN {$wpdb->prefix}postmeta pmprd ON (p.ID = pmprd.post_id AND pmprd.meta_key = '_badgeos_learndash_object_id')
+				INNER JOIN {$wpdb->prefix}postmeta pmprd2 ON (p.ID = pmprd2.post_id AND pmprd2.meta_key = '_badgeos_learndash_object_arg1')
+				WHERE pm.meta_value = '".$this_trigger."' and p.post_status in ('publish')";
+
+	$rows = $wpdb->get_results( $query );
+	
+	if( !empty( $rows ) ) {
+		
+		$users_quiz_data = get_user_meta( $essay->post_author, '_sfwd-quizzes', true );
+
+		foreach ($rows as $key => $row) {
+
+			if( $row->post_type != "step" ) {
+				continue;
+			}
+
+			$step_id = intval( $row->post_id );
+
+			foreach ( $users_quiz_data as $key => $user_quiz ) {
+
+				if( $quiz_id == $user_quiz["pro_quizid"] && false === LD_QuizPro::quiz_attempt_has_ungraded_question( $user_quiz ) && absint( $row->min_grade ) <= absint( $user_quiz["percentage"] ) ) {
+
+					if( $row->quiz_id == 0 ) {
+						$award_achivement = true;
+					} elseif( $row->quiz_id != 0 && $row->quiz_id == $user_quiz["quiz"] ) {
+						$award_achivement = true;
+					} else {
+						$award_achivement = false;
+					}
+
+					if( $award_achivement === true ) {
+						badgeos_maybe_award_achievement_to_user( $step_id, $essay->post_author, $this_trigger, $blog_id, array() );
+						break;
+						//badgeos_award_achievement_to_user( $step_id, $essay->post_author, $this_trigger, $blog_id, array() );
+					}
+				}
+			} // end foreach
+		}
+	}
+
+}
+
+add_action( "learndash_essay_quiz_data_updated", "_badgeos_learnadsh_essay_update_quiz_trigger", 10, 4 );
